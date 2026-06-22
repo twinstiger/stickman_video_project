@@ -16,8 +16,6 @@ from graphs.state import (
     GenerateImagesOutput,
     VideoComposeInput,
     VideoComposeOutput,
-    AudioEmbedInput,
-    AudioEmbedOutput,
     CoverExportInput,
     CoverExportOutput
 )
@@ -26,7 +24,6 @@ from graphs.state import (
 from graphs.nodes.split_story_node import split_story_node
 from graphs.nodes.generate_images_node import generate_images_node
 from graphs.nodes.video_compose_node import video_compose_node
-from graphs.nodes.audio_embed_node import audio_embed_node
 from graphs.nodes.cover_export_node import cover_export_node
 
 
@@ -40,7 +37,7 @@ def build_main_graph() -> StateGraph:
         output_schema=GraphOutput
     )
     
-    # 添加节点（直接使用原始节点函数，它们有正确的Input/Output类型）
+    # 添加节点
     builder.add_node(
         "split_story",
         split_story_node,
@@ -61,23 +58,17 @@ def build_main_graph() -> StateGraph:
     )
     
     builder.add_node(
-        "audio_embed",
-        audio_embed_node
-    )
-    
-    builder.add_node(
         "cover_export",
         cover_export_node
     )
     
-    # 设置入口点：从智能分句开始
+    # 设置入口点
     builder.set_entry_point("split_story")
     
-    # 添加边：线性流程
+    # 线性流程
     builder.add_edge("split_story", "generate_images")
     builder.add_edge("generate_images", "video_compose")
-    builder.add_edge("video_compose", "audio_embed")
-    builder.add_edge("audio_embed", "cover_export")
+    builder.add_edge("video_compose", "cover_export")
     builder.add_edge("cover_export", END)
     
     return builder.compile()

@@ -20,11 +20,8 @@ class GlobalState(BaseModel):
     # 图片生成结果
     image_urls: List[str] = Field(default=[], description="生成的漫画图片URL列表")
     
-    # 视频合成结果
-    base_video_url: str = Field(default="", description="无音频的基础视频URL")
-    
-    # 音频嵌入结果
-    video_with_audio_url: str = Field(default="", description="带音频的完整视频URL")
+    # 视频合成结果（包含字幕+BGM）
+    base_video_url: str = Field(default="", description="最终视频URL（含字幕和音频）")
     
     # 最终输出
     final_video_url: str = Field(default="", description="最终导出的MP4视频URL")
@@ -81,36 +78,25 @@ class SingleImageOutput(BaseModel):
     image_url: str = Field(..., description="生成的图片URL")
 
 
-# ==================== 节点3：视频合成&字幕 ====================
+# ==================== 节点3：视频合成（含字幕+BGM） ====================
 class VideoComposeInput(BaseModel):
     """视频合成节点输入"""
     image_urls: List[str] = Field(..., description="漫画图片URL列表")
-    sentences: List[str] = Field(..., description="对应的台词句子列表")
+    sentences: List[str] = Field(..., description="对应的台词句子列表，用于字幕")
+    story_type: str = Field(..., description="故事类型，用于匹配BGM风格")
+    story_text: str = Field(..., description="完整故事文本，用于生成旁白")
+    enable_narration: bool = Field(default=False, description="是否启用AI旁白朗读")
 
 
 class VideoComposeOutput(BaseModel):
     """视频合成节点输出"""
-    base_video_url: str = Field(..., description="合成后的基础视频URL（无音频）")
+    base_video_url: str = Field(..., description="合成后的完整视频URL（含字幕和BGM）")
 
 
-# ==================== 节点4：音频嵌入 ====================
-class AudioEmbedInput(BaseModel):
-    """音频嵌入节点输入"""
-    base_video_url: str = Field(..., description="基础视频URL")
-    story_text: str = Field(..., description="完整故事文本，用于生成旁白")
-    story_type: str = Field(..., description="故事类型，用于匹配BGM")
-    enable_narration: bool = Field(default=False, description="是否启用AI旁白朗读")
-
-
-class AudioEmbedOutput(BaseModel):
-    """音频嵌入节点输出"""
-    video_with_audio_url: str = Field(..., description="带音频的完整视频URL")
-
-
-# ==================== 节点5：封面生成&导出 ====================
+# ==================== 节点4：封面生成&导出 ====================
 class CoverExportInput(BaseModel):
     """封面生成导出节点输入"""
-    video_with_audio_url: str = Field(..., description="带音频的完整视频URL")
+    base_video_url: str = Field(..., description="完整视频URL")
     image_urls: List[str] = Field(..., description="所有漫画图片URL列表")
     story_title: str = Field(..., description="故事标题")
 

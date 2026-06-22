@@ -10,7 +10,6 @@ from langgraph.runtime import Runtime
 from coze_coding_utils.runtime_ctx.context import Context
 from coze_coding_dev_sdk import ImageGenerationClient
 from coze_coding_dev_sdk.s3 import S3SyncStorage
-from coze_coding_dev_sdk.video_edit import VideoEditClient
 
 from graphs.state import CoverExportInput, CoverExportOutput
 
@@ -27,7 +26,7 @@ def cover_export_node(
     """
     ctx = runtime.context
     
-    video_url = state.video_with_audio_url
+    video_url = state.base_video_url
     image_urls: List[str] = state.image_urls
     story_title = state.story_title
     
@@ -35,129 +34,66 @@ def cover_export_node(
     img_client = ImageGenerationClient(ctx=ctx)
     storage = S3SyncStorage(
         endpoint_url=os.getenv("COZE_BUCKET_ENDPOINT_URL"),
+        access_key="",
+        secret_key="",
         bucket_name=os.getenv("COZE_BUCKET_NAME"),
         region="cn-beijing"
     )
-    video_client = VideoEditClient(ctx=ctx)
     
     # Step 1: 选择高潮画面作为封面基底
     # 选择故事中间偏后的画面（通常是高潮部分）
-    climax_index = len(image_urls) // 2 + len(image_urls) // 4  # 约3/4位置
-    climax_index = min(climax_index, len(image_urls) - 1)
-    climax_image_url = image_urls[climax_index] if image_urls else image_urls[0] if image_urls else ""
+    if image_urls:
+        climax_index = len(image_urls) // 2 + len(image_urls) // 4
+        climax_index = min(climax_index, len(image_urls) - 1)
+        climax_image_url = image_urls[climax_index]
+    else:
+        climax_image_url = ""
     
     # Step 2: 生成带标题的封面图片
+    cover_image_url = climax_image_url
+    
     try:
         # 使用高潮画面作为参考，生成带标题的封面
-        cover_prompt = f"""9:16竖屏抖音视频封面，黑白线条火柴人漫画风格，画面中央有故事高潮场景，
-        底部添加大号加粗故事标题文字："{story_title}"，标题使用白色粗体字配黑色描边，
-        整体构图美观，适合作为视频封面，高清画质"""
+        safe_title = story_title.replace('"', '').replace("'", "")
+        cover_prompt = f"""黑白线条火柴人漫画风格封面图，9:16竖屏，画面底部添加加粗标题文字"{safe_title}"，白色粗体配黑色描边，高清画质"""
         
         cover_response = img_client.generate(
             prompt=cover_prompt,
-            image=climax_image_url,  # 参考高潮画面
-            size="1080x1920",  # 9:16竖屏
+            image=climax_image_url,
+            size="1080x1920",
             watermark=False,
             model="doubao-seedream-5-0-260128"
         )
         
         if cover_response.success and cover_response.image_urls:
             cover_image_url = cover_response.image_urls[0]
-        else:
-            # 封面生成失败，使用高潮画面作为封面
-            cover_image_url = climax_image_url
             
-    except Exception as e:
+    except Exception:
         # 使用高潮画面作为备选封面
-        cover_image_url = climax_image_url
+        pass
     
-    # Step 3: 最终视频已经是带音频的，直接作为导出结果
-    # 如果需要进一步处理（如添加封面帧），可以进行额外合成
-    final_video_url = video_url
-    
-    # Step 4: 上传封面到对象存储（持久化）
+    # Step 3: 上传封面到对象存储
     try:
-        # 下载封面图片
         cover_data = requests.get(cover_image_url, timeout=30).content
         
+        # 清理文件名中的特殊字符
+        safe_file_title = "".join(c if c.isalnum() or c in '_-' else '_' for c in story_title)
         cover_key = storage.upload_file(
             file_content=cover_data,
-            file_name=f"stickman_story/cover_{story_title}.png",
+            file_name=f"stickman_story/cover_{safe_file_title}.png",
             content_type="image/png"
         )
         
         cover_image_url = storage.generate_presigned_url(key=cover_key, expire_time=86400)
         
-    except Exception as e:
+    except Exception:
         # 保持原封面URL
         pass
+    
+    # Step 4: 最终视频直接使用（已包含字幕和音频）
+    final_video_url = video_url
     
     return CoverExportOutput(
         final_video_url=final_video_url,
         cover_image_url=cover_image_url
     )
-
-
-def _add_cover_frame_to_video(
-    video_client: VideoEditClient,
-    video_url: str,
-    cover_url: str,
-    story_title: str,
-    temp_dir: str,
-    storage: S3SyncStorage
-) -> str:
-    """将封面作为视频首帧（可选增强）"""
-    
-    import subprocess
-    
-    # 下载封面
-    cover_path = os.path.join(temp_dir, "cover.png")
-    resp = requests.get(cover_url, timeout=30)
-    with open(cover_path, "wb") as f:
-        f.write(resp.content)
-    
-    # 将封面转为1秒视频片段
-    cover_video_path = os.path.join(temp_dir, "cover_segment.mp4")
-    ffmpeg_cmd = [
-        "ffmpeg", "-y",
-        "-loop", "1", "-i", cover_path,
-        "-t", "1",  # 1秒时长
-        "-vf", "fps=30,format=yuv420p",
-        "-c:v", "libx264",
-        "-s", "1080x1920",
-        cover_video_path
-    ]
-    subprocess.run(ffmpeg_cmd, capture_output=True, check=True)
-    
-    # 下载原视频
-    original_video_path = os.path.join(temp_dir, "original.mp4")
-    resp = requests.get(video_url, timeout=60)
-    with open(original_video_path, "wb") as f:
-        f.write(resp.content)
-    
-    # 拼接封面和原视频
-    final_video_path = os.path.join(temp_dir, "final_with_cover.mp4")
-    concat_file = os.path.join(temp_dir, "concat.txt")
-    with open(concat_file, "w") as f:
-        f.write(f"file '{cover_video_path}'\n")
-        f.write(f"file '{original_video_path}'\n")
-    
-    ffmpeg_cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0", "-i", concat_file,
-        "-c:v", "libx264", "-c:a", "copy",
-        final_video_path
-    ]
-    subprocess.run(ffmpeg_cmd, capture_output=True, check=True)
-    
-    # 上传最终视频
-    with open(final_video_path, "rb") as f:
-        video_data = f.read()
-    
-    video_key = storage.upload_file(
-        file_content=video_data,
-        file_name=f"stickman_story/final_{story_title}.mp4",
-        content_type="video/mp4"
-    )
-    
-    return storage.generate_presigned_url(key=video_key, expire_time=86400)
