@@ -3,6 +3,7 @@
 
 import os
 import json
+import logging
 import subprocess
 import tempfile
 import requests
@@ -14,6 +15,9 @@ from coze_coding_dev_sdk.s3 import S3SyncStorage
 from coze_coding_dev_sdk import TTSClient
 
 from graphs.state import VideoComposeInput, VideoComposeOutput
+
+# 初始化logger
+logger = logging.getLogger(__name__)
 
 
 # 每张图片停留时间（秒）
@@ -103,7 +107,7 @@ def video_compose_node(
                 for i, sentence in enumerate(sentences):
                     seg_file = os.path.join(temp_dir, f"narration_seg_{i:03d}.mp3")
                     try:
-                        narration_url, _ = tts_client.synthesize(
+                        narration_url, audio_size = tts_client.synthesize(
                             uid=f"stickman_narrator_{i}",
                             text=sentence,
                             speaker=speaker,
@@ -112,23 +116,31 @@ def video_compose_node(
                             speech_rate=-5,  # 稍慢，适合故事朗读
                             loudness_rate=20
                         )
+                        logger.info(f"TTS segment {i}: url={narration_url}, size={audio_size}")
                         resp = requests.get(narration_url, timeout=30)
-                        with open(seg_file, "wb") as f:
-                            f.write(resp.content)
-                        narration_segments.append(seg_file)
-                    except Exception:
-                        # 单个句子生成失败，跳过
+                        if resp.status_code == 200 and len(resp.content) > 0:
+                            with open(seg_file, "wb") as f:
+                                f.write(resp.content)
+                            narration_segments.append(seg_file)
+                            logger.info(f"TTS segment {i} saved: {len(resp.content)} bytes")
+                        else:
+                            logger.warning(f"TTS segment {i} download failed: status={resp.status_code}")
+                            narration_segments.append(None)
+                    except Exception as tts_err:
+                        logger.warning(f"TTS segment {i} generation failed: {tts_err}")
                         narration_segments.append(None)
                 
                 # 使用ffmpeg将所有旁白片段按时间顺序合并
                 # 每个片段的开始时间对应其画面的开始时间（i*3秒）
                 if narration_segments and any(s is not None for s in narration_segments):
                     narration_file = os.path.join(temp_dir, "narration.mp3")
+                    logger.info(f"Processing {len([s for s in narration_segments if s])} valid narration segments")
                     
                     # 创建空白底轨音频（时长等于视频总时长）
                     total_duration = len(sentences) * IMAGE_DURATION
                     silence_file = os.path.join(temp_dir, "silence.mp3")
                     _generate_silence(silence_file, total_duration)
+                    logger.info(f"Generated silence base: {total_duration}s")
                     
                     # 构建ffmpeg命令，将每个片段放置在正确的时间位置
                     # 使用adelay滤镜延迟每个片段到对应的时间点
@@ -136,12 +148,14 @@ def video_compose_node(
                     filter_parts = ["[0:a]"]
                     
                     valid_segments = [(i, s) for i, s in enumerate(narration_segments) if s is not None]
+                    logger.info(f"Valid segments: {[i for i, s in valid_segments]}")
                     
                     for idx, (i, seg_file) in enumerate(valid_segments):
                         inputs.extend(["-i", seg_file])  # 添加每个片段作为输入
                         # 延迟到对应画面开始时间（毫秒）
                         delay_ms = int(i * IMAGE_DURATION * 1000)
                         filter_parts.append(f"[{idx+1}:a]adelay={delay_ms}|{delay_ms}[seg{idx}]")
+                        logger.info(f"Segment {i}: delay={delay_ms}ms")
                     
                     if len(valid_segments) > 0:
                         # 混合所有片段
@@ -157,10 +171,21 @@ def video_compose_node(
                             "-c:a", "libmp3lame", "-q:a", "4",
                             narration_file
                         ]
-                        subprocess.run(ffmpeg_merge_cmd, check=True, capture_output=True)
+                        logger.info(f"FFmpeg narration merge cmd: {' '.join(ffmpeg_merge_cmd)}")
+                        result = subprocess.run(ffmpeg_merge_cmd, capture_output=True)
+                        if result.returncode == 0:
+                            logger.info(f"Narration merged successfully: {narration_file}")
+                        else:
+                            logger.error(f"FFmpeg narration merge failed: {result.stderr.decode()}")
+                            narration_file = None
                     else:
+                        logger.warning("No valid narration segments to merge")
                         narration_file = None
-            except Exception:
+                else:
+                    logger.warning("No narration segments generated")
+                    narration_file = None
+            except Exception as narr_err:
+                logger.error(f"Narration generation failed: {narr_err}")
                 narration_file = None
         
         # Step 6: 使用ffmpeg一次性合成视频+字幕+BGM+旁白
