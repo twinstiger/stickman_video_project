@@ -83,35 +83,83 @@ def video_compose_node(
         bgm_freq = _get_bgm_frequency(story_type)
         _generate_bgm(bgm_file, bgm_freq, len(sentences) * IMAGE_DURATION)
         
-        # Step 5: 生成旁白音频（如果启用）- 使用带感情的女声
+        # Step 5: 生成旁白音频（如果启用）- 逐句生成，确保每句对应正确画面
         narration_file = None
-        if enable_narration and story_text:
-            narration_file = os.path.join(temp_dir, "narration.mp3")
+        if enable_narration and sentences:
+            # 逐句生成旁白，确保每句音频对应正确的时间段
+            narration_segments: List[str] = []
+            tts_client = TTSClient(ctx=ctx)
+            
+            # 根据故事类型选择女声
+            if story_type == "励志":
+                speaker = "zh_female_jitangnv_saturn_bigtts"  # 励志女声
+            elif story_type == "亲情" or story_type == "治愈":
+                speaker = "zh_female_santongyongns_saturn_bigtts"  # 温柔女声
+            else:
+                speaker = "zh_female_xiaohe_uranus_bigtts"  # 通用女声
+            
             try:
-                tts_client = TTSClient(ctx=ctx)
-                # 根据故事类型选择女声
-                if story_type == "励志":
-                    # 励志故事使用励志女声
-                    speaker = "zh_female_jitangnv_saturn_bigtts"
-                elif story_type == "亲情" or story_type == "治愈":
-                    # 亲情/治愈故事使用温柔女声
-                    speaker = "zh_female_santongyongns_saturn_bigtts"
-                else:
-                    # 其他类型使用通用女声
-                    speaker = "zh_female_xiaohe_uranus_bigtts"
+                # 为每个句子单独生成TTS音频
+                for i, sentence in enumerate(sentences):
+                    seg_file = os.path.join(temp_dir, f"narration_seg_{i:03d}.mp3")
+                    try:
+                        narration_url, _ = tts_client.synthesize(
+                            uid=f"stickman_narrator_{i}",
+                            text=sentence,
+                            speaker=speaker,
+                            audio_format="mp3",
+                            sample_rate=24000,
+                            speech_rate=-5,  # 稍慢，适合故事朗读
+                            loudness_rate=20
+                        )
+                        resp = requests.get(narration_url, timeout=30)
+                        with open(seg_file, "wb") as f:
+                            f.write(resp.content)
+                        narration_segments.append(seg_file)
+                    except Exception:
+                        # 单个句子生成失败，跳过
+                        narration_segments.append(None)
                 
-                narration_url, _ = tts_client.synthesize(
-                    uid="stickman_narrator",
-                    text=story_text,
-                    speaker=speaker,
-                    audio_format="mp3",
-                    sample_rate=24000,
-                    speech_rate=-5,  # 稍慢，适合故事朗读
-                    loudness_rate=20  # 适中的音量
-                )
-                resp = requests.get(narration_url, timeout=60)
-                with open(narration_file, "wb") as f:
-                    f.write(resp.content)
+                # 使用ffmpeg将所有旁白片段按时间顺序合并
+                # 每个片段的开始时间对应其画面的开始时间（i*3秒）
+                if narration_segments and any(s is not None for s in narration_segments):
+                    narration_file = os.path.join(temp_dir, "narration.mp3")
+                    
+                    # 创建空白底轨音频（时长等于视频总时长）
+                    total_duration = len(sentences) * IMAGE_DURATION
+                    silence_file = os.path.join(temp_dir, "silence.mp3")
+                    _generate_silence(silence_file, total_duration)
+                    
+                    # 构建ffmpeg命令，将每个片段放置在正确的时间位置
+                    # 使用adelay滤镜延迟每个片段到对应的时间点
+                    inputs = ["-i", silence_file]  # 输入0: 空白底轨
+                    filter_parts = ["[0:a]"]
+                    
+                    valid_segments = [(i, s) for i, s in enumerate(narration_segments) if s is not None]
+                    
+                    for idx, (i, seg_file) in enumerate(valid_segments):
+                        inputs.extend(["-i", seg_file])  # 添加每个片段作为输入
+                        # 延迟到对应画面开始时间（毫秒）
+                        delay_ms = int(i * IMAGE_DURATION * 1000)
+                        filter_parts.append(f"[{idx+1}:a]adelay={delay_ms}|{delay_ms}[seg{idx}]")
+                    
+                    if len(valid_segments) > 0:
+                        # 混合所有片段
+                        mix_inputs = "".join([f"[seg{i}]" for i in range(len(valid_segments))])
+                        filter_parts.append(f"[0:a]{mix_inputs}amix=inputs={len(valid_segments)+1}:duration=first:dropout_transition=0[narration_out]")
+                        filter_complex_narration = ";".join(filter_parts)
+                        
+                        ffmpeg_merge_cmd = [
+                            "ffmpeg", "-y",
+                            *inputs,
+                            "-filter_complex", filter_complex_narration,
+                            "-map", "[narration_out]",
+                            "-c:a", "libmp3lame", "-q:a", "4",
+                            narration_file
+                        ]
+                        subprocess.run(ffmpeg_merge_cmd, check=True, capture_output=True)
+                    else:
+                        narration_file = None
             except Exception:
                 narration_file = None
         
@@ -392,3 +440,15 @@ def _get_bgm_frequency(story_type: str) -> int:
         "治愈": 262,   # C4音符
     }
     return freq_mapping.get(story_type, 392)
+
+
+def _generate_silence(silence_file: str, duration: float) -> None:
+    """生成空白音频文件，作为旁白合并的底轨"""
+    ffmpeg_cmd = [
+        "ffmpeg", "-y",
+        "-f", "lavfi",
+        "-i", f"anullsrc=r=24000:cl=mono,duration={duration}",
+        "-c:a", "libmp3lame", "-q:a", "4",
+        silence_file
+    ]
+    subprocess.run(ffmpeg_cmd, capture_output=True, check=True)
