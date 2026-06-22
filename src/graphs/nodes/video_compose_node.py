@@ -83,20 +83,31 @@ def video_compose_node(
         bgm_freq = _get_bgm_frequency(story_type)
         _generate_bgm(bgm_file, bgm_freq, len(sentences) * IMAGE_DURATION)
         
-        # Step 5: 生成旁白音频（如果启用）
+        # Step 5: 生成旁白音频（如果启用）- 使用带感情的女声
         narration_file = None
         if enable_narration and story_text:
             narration_file = os.path.join(temp_dir, "narration.mp3")
             try:
                 tts_client = TTSClient(ctx=ctx)
+                # 根据故事类型选择女声
+                if story_type == "励志":
+                    # 励志故事使用励志女声
+                    speaker = "zh_female_jitangnv_saturn_bigtts"
+                elif story_type == "亲情" or story_type == "治愈":
+                    # 亲情/治愈故事使用温柔女声
+                    speaker = "zh_female_santongyongns_saturn_bigtts"
+                else:
+                    # 其他类型使用通用女声
+                    speaker = "zh_female_xiaohe_uranus_bigtts"
+                
                 narration_url, _ = tts_client.synthesize(
                     uid="stickman_narrator",
                     text=story_text,
-                    speaker="zh_male_ruyayichen_saturn_bigtts",
+                    speaker=speaker,
                     audio_format="mp3",
                     sample_rate=24000,
-                    speech_rate=-10,
-                    loudness_rate=30
+                    speech_rate=-5,  # 稍慢，适合故事朗读
+                    loudness_rate=20  # 适中的音量
                 )
                 resp = requests.get(narration_url, timeout=60)
                 with open(narration_file, "wb") as f:
@@ -104,85 +115,126 @@ def video_compose_node(
             except Exception:
                 narration_file = None
         
-        # Step 6: 使用ffmpeg一次性合成视频+字幕+音频
+        # Step 6: 使用ffmpeg一次性合成视频+字幕+BGM+旁白
         output_video = os.path.join(temp_dir, "final_video.mp4")
         
-        # 构建ffmpeg滤镜：添加字幕
-        # 使用drawtext滤镜或ass滤镜
-        subtitle_filter = f"ass='{subtitle_file}'"
+        # 需要转义字幕文件路径中的特殊字符
+        escaped_subtitle = subtitle_file.replace("\\", "/").replace("'", "'\\''")
         
-        # 构建音频输入和混合
-        audio_inputs = []
-        audio_filter_parts = []
+        # 构建完整的filter_complex：视频滤镜 + 音频混合
+        # 注意：不能同时使用 -vf 和 -filter_complex，必须全部放在 filter_complex 中
         
-        # BGM输入
-        audio_inputs.extend([
-            "-i", bgm_file
-        ])
-        
-        # 如果有旁白，添加旁白输入
         if narration_file:
-            audio_inputs.extend([
-                "-i", narration_file
-            ])
-            # 混合BGM和旁白
-            audio_filter_parts.append("[1:a]volume=0.15[bgm]")
-            audio_filter_parts.append("[2:a]volume=0.8[narration]")
-            audio_filter_parts.append("[bgm][narration]amix=inputs=2:duration=longest[aout]")
-            audio_filter = ";".join(audio_filter_parts)
+            # 有旁白：视频+字幕，音频=BGM+旁白混合
+            filter_complex = (
+                f"[0:v]fps=30,format=yuv420p,scale=1080:1920:force_original_aspect_ratio=decrease,"
+                f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2,"
+                f"subtitles='{escaped_subtitle}'[vout];"
+                f"[1:a]volume=0.15[bgm];"
+                f"[2:a]volume=0.9[narration];"
+                f"[bgm][narration]amix=inputs=2:duration=longest:dropout_transition=2[aout]"
+            )
+            ffmpeg_cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat", "-safe", "0", "-i", list_file,  # 输入0: 图片序列
+                "-i", bgm_file,                                  # 输入1: BGM
+                "-i", narration_file,                            # 输入2: 旁白
+                "-filter_complex", filter_complex,
+                "-map", "[vout]",
+                "-map", "[aout]",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+                "-c:a", "aac", "-b:a", "192k",
+                "-shortest",
+                output_video
+            ]
         else:
-            # 只有BGM
-            audio_filter_parts.append("[1:a]volume=0.15[aout]")
-            audio_filter = ";".join(audio_filter_parts)
-        
-        # ffmpeg完整命令
-        ffmpeg_cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat", "-safe", "0", "-i", list_file,  # 图片序列输入
-        ]
-        
-        # 添加音频输入
-        ffmpeg_cmd.extend(audio_inputs)
-        
-        # 视频滤镜：字幕 + 缩放
-        ffmpeg_cmd.extend([
-            "-vf", f"fps=30,format=yuv420p,scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,{subtitle_filter}",
-            "-filter_complex", audio_filter,
-            "-map", "0:v", "-map", "[aout]",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-            "-c:a", "aac", "-b:a", "128k",
-            "-shortest",
-            output_video
-        ])
+            # 无旁白：视频+字幕+BGM
+            filter_complex = (
+                f"[0:v]fps=30,format=yuv420p,scale=1080:1920:force_original_aspect_ratio=decrease,"
+                f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2,"
+                f"subtitles='{escaped_subtitle}'[vout];"
+                f"[1:a]volume=0.15[aout]"
+            )
+            ffmpeg_cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat", "-safe", "0", "-i", list_file,  # 输入0: 图片序列
+                "-i", bgm_file,                                  # 输入1: BGM
+                "-filter_complex", filter_complex,
+                "-map", "[vout]",
+                "-map", "[aout]",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+                "-c:a", "aac", "-b:a", "128k",
+                "-shortest",
+                output_video
+            ]
         
         result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
         
         if result.returncode != 0:
-            # 备用方案：不使用复杂音频滤镜，简化处理
-            ffmpeg_cmd_simple = [
-                "ffmpeg", "-y",
-                "-f", "concat", "-safe", "0", "-i", list_file,
-                "-i", bgm_file,
-                "-vf", f"fps=30,format=yuv420p,scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
-                "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-                "-c:a", "aac", "-b:a", "128k",
-                "-af", f"volume={BGM_VOLUME}",
-                "-shortest",
-                output_video
-            ]
-            result2 = subprocess.run(ffmpeg_cmd_simple, capture_output=True, text=True)
+            # 备用方案1：分开处理 - 先生成无字幕视频+音频，再添加字幕
+            video_no_sub = os.path.join(temp_dir, "video_no_sub.mp4")
             
-            if result2.returncode != 0:
-                # 再备用：生成无字幕版本
-                ffmpeg_cmd_nosub = [
+            if narration_file:
+                # 有旁白的备用方案
+                ffmpeg_cmd_backup1 = [
                     "ffmpeg", "-y",
                     "-f", "concat", "-safe", "0", "-i", list_file,
+                    "-i", bgm_file,
+                    "-i", narration_file,
+                    "-vf", "fps=30,format=yuv420p,scale=1080:1920",
+                    "-filter_complex", "[1:a]volume=0.15[bgm];[2:a]volume=0.9[narr];[bgm][narr]amix=inputs=2:duration=longest[aout]",
+                    "-map", "0:v", "-map", "[aout]",
+                    "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+                    "-c:a", "aac", "-b:a", "192k",
+                    "-shortest",
+                    video_no_sub
+                ]
+            else:
+                # 只有BGM的备用方案
+                ffmpeg_cmd_backup1 = [
+                    "ffmpeg", "-y",
+                    "-f", "concat", "-safe", "0", "-i", list_file,
+                    "-i", bgm_file,
+                    "-vf", "fps=30,format=yuv420p,scale=1080:1920",
+                    "-af", "volume=0.15",
+                    "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+                    "-c:a", "aac", "-b:a", "128k",
+                    "-shortest",
+                    video_no_sub
+                ]
+            
+            result2 = subprocess.run(ffmpeg_cmd_backup1, capture_output=True, text=True)
+            
+            if result2.returncode != 0:
+                # 备用方案2：最简化 - 只生成视频+静音BGM轨道
+                ffmpeg_cmd_backup2 = [
+                    "ffmpeg", "-y",
+                    "-f", "concat", "-safe", "0", "-i", list_file,
+                    "-i", bgm_file,
                     "-vf", "fps=30,format=yuv420p,scale=1080:1920",
                     "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-                    "-an",  # 无音频
-                    output_video
+                    "-c:a", "aac", "-b:a", "128k",
+                    "-map", "0:v", "-map", "1:a",
+                    "-shortest",
+                    video_no_sub
                 ]
-                subprocess.run(ffmpeg_cmd_nosub, capture_output=True, check=True)
+                subprocess.run(ffmpeg_cmd_backup2, capture_output=True, check=True)
+            
+            # 然后添加字幕
+            ffmpeg_sub_cmd = [
+                "ffmpeg", "-y",
+                "-i", video_no_sub,
+                "-vf", f"subtitles='{escaped_subtitle}'",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+                "-c:a", "copy",
+                output_video
+            ]
+            sub_result = subprocess.run(ffmpeg_sub_cmd, capture_output=True, text=True)
+            
+            if sub_result.returncode != 0:
+                # 字幕添加失败，使用原视频
+                import shutil
+                shutil.copy(video_no_sub, output_video)
         
         # Step 7: 如果上面生成了无字幕版本，单独添加字幕
         # 使用ffmpeg添加字幕滤镜
