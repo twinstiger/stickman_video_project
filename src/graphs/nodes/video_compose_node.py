@@ -219,19 +219,26 @@ def video_compose_node(
         result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
         
         if result.returncode != 0:
-            # 备用方案1：分开处理 - 先生成无字幕视频+音频，再添加字幕
+            # 备用方案：分开处理 - 先生成带音频的视频，再添加字幕
             video_no_sub = os.path.join(temp_dir, "video_no_sub.mp4")
             
-            if narration_file:
-                # 有旁白的备用方案
+            # 使用正确的filter_complex格式（不能和-vf同时使用）
+            if narration_file and os.path.exists(narration_file):
+                # 有旁白的备用方案 - 所有滤镜放在filter_complex中
+                filter_complex_backup = (
+                    "[0:v]fps=30,format=yuv420p,scale=1080:1920[vout];"
+                    "[1:a]volume=0.15[bgm];"
+                    "[2:a]volume=0.9[narr];"
+                    "[bgm][narr]amix=inputs=2:duration=longest:dropout_transition=2[aout]"
+                )
                 ffmpeg_cmd_backup1 = [
                     "ffmpeg", "-y",
                     "-f", "concat", "-safe", "0", "-i", list_file,
                     "-i", bgm_file,
                     "-i", narration_file,
-                    "-vf", "fps=30,format=yuv420p,scale=1080:1920",
-                    "-filter_complex", "[1:a]volume=0.15[bgm];[2:a]volume=0.9[narr];[bgm][narr]amix=inputs=2:duration=longest[aout]",
-                    "-map", "0:v", "-map", "[aout]",
+                    "-filter_complex", filter_complex_backup,
+                    "-map", "[vout]",
+                    "-map", "[aout]",
                     "-c:v", "libx264", "-preset", "medium", "-crf", "23",
                     "-c:a", "aac", "-b:a", "192k",
                     "-shortest",
@@ -239,12 +246,17 @@ def video_compose_node(
                 ]
             else:
                 # 只有BGM的备用方案
+                filter_complex_backup = (
+                    "[0:v]fps=30,format=yuv420p,scale=1080:1920[vout];"
+                    "[1:a]volume=0.15[aout]"
+                )
                 ffmpeg_cmd_backup1 = [
                     "ffmpeg", "-y",
                     "-f", "concat", "-safe", "0", "-i", list_file,
                     "-i", bgm_file,
-                    "-vf", "fps=30,format=yuv420p,scale=1080:1920",
-                    "-af", "volume=0.15",
+                    "-filter_complex", filter_complex_backup,
+                    "-map", "[vout]",
+                    "-map", "[aout]",
                     "-c:v", "libx264", "-preset", "medium", "-crf", "23",
                     "-c:a", "aac", "-b:a", "128k",
                     "-shortest",
@@ -254,15 +266,16 @@ def video_compose_node(
             result2 = subprocess.run(ffmpeg_cmd_backup1, capture_output=True, text=True)
             
             if result2.returncode != 0:
-                # 备用方案2：最简化 - 只生成视频+静音BGM轨道
+                # 备用方案2：最简化 - 直接拼接视频和音频
                 ffmpeg_cmd_backup2 = [
                     "ffmpeg", "-y",
                     "-f", "concat", "-safe", "0", "-i", list_file,
                     "-i", bgm_file,
+                    "-map", "0:v",
+                    "-map", "1:a",
                     "-vf", "fps=30,format=yuv420p,scale=1080:1920",
                     "-c:v", "libx264", "-preset", "medium", "-crf", "23",
                     "-c:a", "aac", "-b:a", "128k",
-                    "-map", "0:v", "-map", "1:a",
                     "-shortest",
                     video_no_sub
                 ]
@@ -280,7 +293,7 @@ def video_compose_node(
             sub_result = subprocess.run(ffmpeg_sub_cmd, capture_output=True, text=True)
             
             if sub_result.returncode != 0:
-                # 字幕添加失败，使用原视频
+                # 字幕添加失败，使用原视频（保留音频）
                 import shutil
                 shutil.copy(video_no_sub, output_video)
         
