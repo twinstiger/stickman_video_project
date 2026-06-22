@@ -19,7 +19,7 @@ from graphs.state import VideoComposeInput, VideoComposeOutput
 # 每张图片停留时间（秒）
 IMAGE_DURATION = 3.0
 
-# 字幕样式配置
+# 字幕样式配置 - 使用方正兰亭黑简体（粗黑体风格）
 SUBTITLE_CONFIG = SubtitleConfig(
     font_pos_config=FontPosConfig(
         pos_x="0",
@@ -27,13 +27,13 @@ SUBTITLE_CONFIG = SubtitleConfig(
         width="100%",
         height="15%"
     ),
-    font_size=40,  # 粗黑体大小
+    font_size=42,  # 粗黑体大小（更大更醒目）
     font_color="#FFFFFFFF",  # 白色字体
-    font_type="1525745",  # 默认字体（粗黑体风格）
+    font_type="1234271",  # 方正兰亭黑简体（粗黑体）
     background_color="#00000000",  # 无背景
     background_border_width=0,
-    border_width=2,  # 黑色描边
-    border_color="#000000AA"  # 黑色描边（半透明）
+    border_width=3,  # 黑色描边加粗
+    border_color="#000000FF"  # 黑色描边（完全不透明）
 )
 
 
