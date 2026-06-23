@@ -165,8 +165,9 @@ def video_compose_node(
                         inputs.extend(["-i", seg_file])  # 添加每个片段作为输入
                         # 延迟到对应画面开始时间（毫秒）
                         delay_ms = int(i * IMAGE_DURATION * 1000)
-                        filter_parts.append(f"[{idx+1}:a]adelay={delay_ms}|{delay_ms}[seg{idx}]")
-                        logger.info(f"Segment {i}: delay={delay_ms}ms")
+                        # 使用atrim限制每个片段时长为IMAGE_DURATION（3秒），防止叠加
+                        filter_parts.append(f"[{idx+1}:a]atrim=start=0:end={IMAGE_DURATION},asetpts=PTS-STARTPTS,adelay={delay_ms}|{delay_ms}[seg{idx}]")
+                        logger.info(f"Segment {i}: delay={delay_ms}ms, trim to {IMAGE_DURATION}s")
                     
                     if len(valid_segments) > 0:
                         # 混合所有片段
