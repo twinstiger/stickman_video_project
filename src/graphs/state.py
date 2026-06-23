@@ -11,6 +11,7 @@ class GlobalState(BaseModel):
     # 原始输入
     story_text: str = Field(default="", description="用户输入的完整故事文本")
     enable_narration: bool = Field(default=False, description="是否启用AI旁白朗读")
+    voice_type: str = Field(default="励志女声", description="旁白女声类型：励志女声/温柔女声/甜美女声/通用女声")
     
     # 分句结果
     sentences: List[str] = Field(default=[], description="智能拆分后的台词句子列表")
@@ -33,6 +34,10 @@ class GraphInput(BaseModel):
     """工作流输入参数"""
     story_text: str = Field(..., description="完整的故事文本，支持励志、亲情、感悟类故事")
     enable_narration: bool = Field(default=False, description="是否启用AI旁白朗读（可选功能）")
+    voice_type: Literal["励志女声", "温柔女声", "甜美女声", "通用女声"] = Field(
+        default="励志女声",
+        description="旁白女声类型选择：励志女声(适合励志故事)、温柔女声(适合亲情治愈)、甜美女声(适合温馨故事)、通用女声(适合所有类型)"
+    )
 
 
 class GraphOutput(BaseModel):
@@ -86,6 +91,7 @@ class VideoComposeInput(BaseModel):
     story_type: str = Field(..., description="故事类型，用于匹配BGM风格")
     story_text: str = Field(..., description="完整故事文本，用于生成旁白")
     enable_narration: bool = Field(default=False, description="是否启用AI旁白朗读")
+    voice_type: str = Field(default="励志女声", description="旁白女声类型：励志女声/温柔女声/甜美女声/通用女声")
 
 
 class VideoComposeOutput(BaseModel):

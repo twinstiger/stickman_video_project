@@ -52,6 +52,7 @@ def video_compose_node(
     story_type: str = state.story_type if hasattr(state, 'story_type') else "励志"
     story_text: str = state.story_text if hasattr(state, 'story_text') else ""
     enable_narration: bool = state.enable_narration if hasattr(state, 'enable_narration') else False
+    voice_type: str = state.voice_type if hasattr(state, 'voice_type') else "励志女声"
     
     if not image_urls:
         raise Exception("没有可用的图片进行视频合成")
@@ -85,7 +86,7 @@ def video_compose_node(
         # Step 4: 生成BGM音频
         bgm_file = os.path.join(temp_dir, "bgm.mp3")
         bgm_freq = _get_bgm_frequency(story_type)
-        _generate_bgm(bgm_file, bgm_freq, len(sentences) * IMAGE_DURATION)
+        _generate_bgm(bgm_file, bgm_freq, len(frame_paths) * IMAGE_DURATION)  # 使用图片数量计算BGM时长
         
         # Step 5: 生成旁白音频（如果启用）- 逐句生成，确保每句对应正确画面
         narration_file = None
@@ -94,17 +95,27 @@ def video_compose_node(
             narration_segments: List[str] = []
             tts_client = TTSClient(ctx=ctx)
             
-            # 根据故事类型选择女声
-            if story_type == "励志":
-                speaker = "zh_female_jitangnv_saturn_bigtts"  # 励志女声
-            elif story_type == "亲情" or story_type == "治愈":
-                speaker = "zh_female_santongyongns_saturn_bigtts"  # 温柔女声
-            else:
-                speaker = "zh_female_xiaohe_uranus_bigtts"  # 通用女声
+            # 根据用户选择的voice_type选择女声
+            voice_mapping = {
+                "励志女声": "zh_female_jitangnv_saturn_bigtts",      # 励志女声
+                "温柔女声": "zh_female_santongyongns_saturn_bigtts", # 温柔女声
+                "甜美女声": "zh_female_meilinvyou_saturn_bigtts",    # 甜美女声
+                "通用女声": "zh_female_xiaohe_uranus_bigtts",        # 通用女声
+            }
+            speaker = voice_mapping.get(voice_type, "zh_female_jitangnv_saturn_bigtts")
+            logger.info(f"Selected voice: {voice_type} -> {speaker}")
+            
+            # 确保旁白数量与图片数量一致（关键修复！）
+            narration_count = min(len(sentences), len(frame_paths))
+            logger.info(f"Narration sync: sentences={len(sentences)}, frame_count={len(frame_paths)}, narration_count={narration_count}")
             
             try:
-                # 为每个句子单独生成TTS音频
-                for i, sentence in enumerate(sentences):
+                # 为每个句子单独生成TTS音频（严格限制到图片数量）
+                for i in range(narration_count):
+                    sentence = sentences[i] if i < len(sentences) else ""
+                    if not sentence.strip():
+                        narration_segments.append(None)
+                        continue
                     seg_file = os.path.join(temp_dir, f"narration_seg_{i:03d}.mp3")
                     try:
                         narration_url, audio_size = tts_client.synthesize(
@@ -113,7 +124,7 @@ def video_compose_node(
                             speaker=speaker,
                             audio_format="mp3",
                             sample_rate=24000,
-                            speech_rate=-5,  # 稍慢，适合故事朗读
+                            speech_rate=-15,  # 加快语速，确保3秒内完成
                             loudness_rate=20
                         )
                         logger.info(f"TTS segment {i}: url={narration_url}, size={audio_size}")
@@ -136,8 +147,8 @@ def video_compose_node(
                     narration_file = os.path.join(temp_dir, "narration.mp3")
                     logger.info(f"Processing {len([s for s in narration_segments if s])} valid narration segments")
                     
-                    # 创建空白底轨音频（时长等于视频总时长）
-                    total_duration = len(sentences) * IMAGE_DURATION
+                    # 创建空白底轨音频（时长等于视频总时长，使用图片数量）
+                    total_duration = len(frame_paths) * IMAGE_DURATION
                     silence_file = os.path.join(temp_dir, "silence.mp3")
                     _generate_silence(silence_file, total_duration)
                     logger.info(f"Generated silence base: {total_duration}s")
@@ -145,7 +156,7 @@ def video_compose_node(
                     # 构建ffmpeg命令，将每个片段放置在正确的时间位置
                     # 使用adelay滤镜延迟每个片段到对应的时间点
                     inputs = ["-i", silence_file]  # 输入0: 空白底轨
-                    filter_parts = ["[0:a]"]
+                    filter_parts = []  # 空列表开始，避免开头有空滤镜链
                     
                     valid_segments = [(i, s) for i, s in enumerate(narration_segments) if s is not None]
                     logger.info(f"Valid segments: {[i for i, s in valid_segments]}")
@@ -397,8 +408,12 @@ Style: Default,WenQuanYi Zen Hei,42,&H00FFFFFF,&H000000FF,&H00000000,&HA0000000,
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     
-    # 添加每个字幕条目
-    for i, sentence in enumerate(sentences):
+    # 确保字幕数量与图片数量一致（关键修复！）
+    actual_subtitle_count = min(len(sentences), frame_count)
+    
+    # 添加每个字幕条目（严格限制到图片数量）
+    for i in range(actual_subtitle_count):
+        sentence = sentences[i] if i < len(sentences) else ""
         start_time = i * IMAGE_DURATION
         end_time = (i + 1) * IMAGE_DURATION
         
@@ -462,7 +477,8 @@ def _generate_bgm(bgm_file: str, base_freq: int, duration: float) -> None:
             ffmpeg_cmd3 = [
                 "ffmpeg", "-y",
                 "-f", "lavfi",
-                "-i", f"anullsrc=r=24000:cl=mono,duration={duration}",
+                "-i", "anullsrc=r=24000:cl=mono",
+                "-t", str(duration),
                 "-c:a", "libmp3lame", "-q:a", "4",
                 bgm_file
             ]
@@ -485,7 +501,8 @@ def _generate_silence(silence_file: str, duration: float) -> None:
     ffmpeg_cmd = [
         "ffmpeg", "-y",
         "-f", "lavfi",
-        "-i", f"anullsrc=r=24000:cl=mono,duration={duration}",
+        "-i", "anullsrc=r=24000:cl=mono",
+        "-t", str(duration),
         "-c:a", "libmp3lame", "-q:a", "4",
         silence_file
     ]
