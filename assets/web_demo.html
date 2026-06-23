@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>火柴人剧情漫画视频生成器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .form-group {
+            margin-bottom: 25px;
+        }
+        label {
+            display: block;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 8px;
+            font-size: 16px;
+        }
+        textarea {
+            width: 100%;
+            height: 200px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 15px;
+            font-size: 16px;
+            resize: vertical;
+            transition: border-color 0.3s;
+        }
+        textarea:focus {
+            border-color: #667eea;
+            outline: none;
+        }
+        .textarea-hint {
+            color: #999;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+        .options-row {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+        .option-item {
+            flex: 1;
+        }
+        select {
+            width: 100%;
+            height: 45px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 10px;
+            font-size: 16px;
+            background: white;
+            cursor: pointer;
+        }
+        select:focus {
+            border-color: #667eea;
+            outline: none;
+        }
+        .switch-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .switch {
+            position: relative;
+            width: 60px;
+            height: 30px;
+            background: #ccc;
+            border-radius: 30px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .switch.active {
+            background: #667eea;
+        }
+        .switch-knob {
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 24px;
+            height: 24px;
+            background: white;
+            border-radius: 50%;
+            transition: left 0.3s;
+        }
+        .switch.active .switch-knob {
+            left: 33px;
+        }
+        .btn {
+            width: 100%;
+            height: 50px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+        }
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        .progress {
+            display: none;
+            text-align: center;
+            margin-top: 20px;
+            color: #666;
+        }
+        .progress.active {
+            display: block;
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .result {
+            display: none;
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        .result.active {
+            display: block;
+        }
+        .result-title {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+        }
+        .result-item {
+            margin-bottom: 15px;
+        }
+        .result-label {
+            color: #666;
+            font-size: 14px;
+        }
+        .result-link {
+            display: block;
+            color: #667eea;
+            word-break: break-all;
+            margin-top: 5px;
+        }
+        .video-preview {
+            width: 100%;
+            max-width: 400px;
+            margin-top: 10px;
+            border-radius: 10px;
+        }
+        .cover-preview {
+            width: 100%;
+            max-width: 200px;
+            margin-top: 10px;
+            border-radius: 10px;
+        }
+        .error {
+            display: none;
+            margin-top: 20px;
+            padding: 15px;
+            background: #fee;
+            border: 1px solid #f99;
+            border-radius: 10px;
+            color: #c00;
+        }
+        .error.active {
+            display: block;
+        }
+        .api-config {
+            margin-bottom: 25px;
+            padding: 15px;
+            background: #f0f0f0;
+            border-radius: 10px;
+        }
+        .api-config input {
+            width: 100%;
+            height: 40px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 10px;
+            font-size: 14px;
+        }
+        .api-config-hint {
+            color: #999;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 火柴人剧情漫画视频生成器</h1>
+        <p class="subtitle">输入故事文本，一键生成抖音风格的黑白火柴人漫画短视频</p>
+        
+        <!-- API配置 -->
+        <div class="api-config">
+            <label>API服务地址</label>
+            <input type="text" id="apiUrl" value="http://localhost:9000" placeholder="例如: http://localhost:9000 或 https://your-domain.com">
+            <p class="api-config-hint">请输入部署后的服务地址（默认本地开发地址）</p>
+        </div>
+        
+        <!-- 故事文本输入 -->
+        <div class="form-group">
+            <label>📝 故事文本</label>
+            <textarea id="storyText" placeholder="粘贴你的完整故事文本，例如：
+
+有个钢琴师在酒吧里打工。他演奏的水平一流，很多人都是慕名前来听他弹一曲。一天晚上，有个常客告诉他，自己不想听钢琴师演奏任何曲子了，只想听他唱一首歌。钢琴师尴尬地回答：我不会唱。客人坚持要求他唱，酒吧老板也劝说他。最终，钢琴师不得不开口唱歌，全场观众安静聆听。没想到他的歌声如此动人，从此他成为了万众瞩目的歌手，实现了人生逆袭。
+
+这个故事告诉我们：有时候，逼自己一把，才能发现隐藏的才能。"></textarea>
+            <p class="textarea-hint">支持励志、亲情、感悟、治愈类故事，建议10-30句，每句不超过25字</p>
+        </div>
+        
+        <!-- 选项 -->
+        <div class="options-row">
+            <div class="option-item">
+                <label>🎙️ 旁白女声</label>
+                <select id="voiceType">
+                    <option value="励志女声">励志女声 - 适合励志哲理故事</option>
+                    <option value="温柔女声">温柔女声 - 适合亲情治愈故事</option>
+                    <option value="甜美女声">甜美女声 - 适合温馨甜蜜故事</option>
+                    <option value="通用女声">通用女声 - 所有类型故事</option>
+                </select>
+            </div>
+            <div class="option-item">
+                <label>🔊 启用旁白</label>
+                <div class="switch-container">
+                    <div class="switch" id="narrationSwitch">
+                        <div class="switch-knob"></div>
+                    </div>
+                    <span id="switchText">关闭</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 生成按钮 -->
+        <button class="btn" id="generateBtn" onclick="generateVideo()">
+            🎬 开始生成视频
+        </button>
+        
+        <!-- 进度显示 -->
+        <div class="progress" id="progress">
+            <div class="spinner"></div>
+            <p>正在生成视频，请耐心等待（约2-5分钟）...</p>
+            <p id="progressText">准备中...</p>
+        </div>
+        
+        <!-- 错误显示 -->
+        <div class="error" id="error"></div>
+        
+        <!-- 结果显示 -->
+        <div class="result" id="result">
+            <p class="result-title">✅ 生成完成！</p>
+            <div class="result-item">
+                <p class="result-label">📺 视频链接（可直接上传抖音）：</p>
+                <a class="result-link" id="videoUrl" href="" target="_blank"></a>
+                <video class="video-preview" id="videoPreview" controls></video>
+            </div>
+            <div class="result-item">
+                <p class="result-label">🖼️ 封面图片：</p>
+                <a class="result-link" id="coverUrl" href="" target="_blank"></a>
+                <img class="cover-preview" id="coverPreview">
+            </div>
+            <div class="result-item">
+                <p class="result-label">📋 运行ID：</p>
+                <span id="runId"></span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let enableNarration = false;
+        
+        // 开关切换
+        document.getElementById('narrationSwitch').addEventListener('click', function() {
+            enableNarration = !enableNarration;
+            this.classList.toggle('active');
+            document.getElementById('switchText').textContent = enableNarration ? '开启' : '关闭';
+        });
+        
+        // 生成视频
+        async function generateVideo() {
+            const storyText = document.getElementById('storyText').value.trim();
+            const voiceType = document.getElementById('voiceType').value;
+            const apiUrl = document.getElementById('apiUrl').value.trim();
+            
+            if (!storyText) {
+                showError('请输入故事文本！');
+                return;
+            }
+            
+            if (!apiUrl) {
+                showError('请输入API服务地址！');
+                return;
+            }
+            
+            // 显示进度，隐藏其他
+            hideAll();
+            document.getElementById('progress').classList.add('active');
+            document.getElementById('generateBtn').disabled = true;
+            
+            // 构建请求
+            const payload = {
+                story_text: storyText,
+                enable_narration: enableNarration,
+                voice_type: voiceType
+            };
+            
+            try {
+                document.getElementById('progressText').textContent = '正在分析故事并拆分句子...';
+                
+                const response = await fetch(`${apiUrl}/run`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || `请求失败: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                
+                // 显示结果
+                hideAll();
+                document.getElementById('result').classList.add('active');
+                
+                // 设置视频
+                document.getElementById('videoUrl').href = result.final_video_url;
+                document.getElementById('videoUrl').textContent = result.final_video_url;
+                document.getElementById('videoPreview').src = result.final_video_url;
+                
+                // 设置封面
+                document.getElementById('coverUrl').href = result.cover_image_url;
+                document.getElementById('coverUrl').textContent = result.cover_image_url;
+                document.getElementById('coverPreview').src = result.cover_image_url;
+                
+                // 设置运行ID
+                document.getElementById('runId').textContent = result.run_id;
+                
+            } catch (error) {
+                showError(`生成失败: ${error.message}`);
+            } finally {
+                document.getElementById('generateBtn').disabled = false;
+            }
+        }
+        
+        function hideAll() {
+            document.getElementById('progress').classList.remove('active');
+            document.getElementById('result').classList.remove('active');
+            document.getElementById('error').classList.remove('active');
+        }
+        
+        function showError(message) {
+            hideAll();
+            document.getElementById('error').classList.add('active');
+            document.getElementById('error').textContent = message;
+            document.getElementById('generateBtn').disabled = false;
+        }
+    </script>
+</body>
+</html>
