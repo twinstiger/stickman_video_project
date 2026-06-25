@@ -352,7 +352,7 @@ def _create_dynamic_ass_subtitle(subtitle_file: str, sentences: List[str], cumul
         f.write("\n")
         f.write("[V4+ Styles]\n")
         f.write("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n")
-        f.write(f"Style: Default,WenQuanYi Zen Hei,{FONT_SIZE},&H00FFFFFF,&H000000FF,&H00000000,&HA0000000,-1,0,0,0,100,100,0,0,1,{BORDER_WIDTH},0,2,50,50,20,1\n")
+        f.write(f"Style: Default,WenQuanYi Zen Hei,{FONT_SIZE},&H00FFFFFF,&H000000FF,&H00000000,&HA0000000,-1,0,0,0,100,100,0,0,1,{BORDER_WIDTH},0,8,50,50,50,1\n")
         f.write("\n")
         f.write("[Events]\n")
         f.write("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
