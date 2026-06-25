@@ -188,7 +188,7 @@ def video_compose_node(
             
             if len(valid_segments) > 0:
                 mix_inputs = "".join([f"[seg{i}]" for i in range(len(valid_segments))])
-                filter_parts.append(f"[0:a]{mix_inputs}amix=inputs={len(valid_segments)+1}:duration=first:dropout_transition=0[narration_out]")
+                filter_parts.append(f"[0:a]{mix_inputs}amix=inputs={len(valid_segments)+1}:duration=first:dropout_transition=0:normalize=0[narration_out]")
                 filter_complex_narration = ";".join(filter_parts)
                 
                 ffmpeg_merge_cmd = [
@@ -219,7 +219,7 @@ def video_compose_node(
             audio_inputs = ["-i", bgm_file, "-i", narration_file]
             # 输入索引：0=base_video(无音频), 1=bgm, 2=narration
             # BGM音量15%，旁白音量90%
-            audio_filter = f"[1:a]volume={BGM_VOLUME}[bgm];[2:a]volume=0.9[narration];[bgm][narration]amix=inputs=2:duration=first:dropout_transition=0[aout]"
+            audio_filter = f"[1:a]volume={BGM_VOLUME}[bgm];[2:a]volume=0.9[narration];[bgm][narration]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]"
         else:
             # 无旁白：只有BGM
             audio_inputs = ["-i", bgm_file]
@@ -439,7 +439,7 @@ def _generate_bgm(output_file: str, base_freq: int, duration: float):
         "-f", "lavfi",
         "-i", f"sine=frequency={freq3}:duration={duration}",
         "-filter_complex",
-        f"[1:a][2:a][3:a]amix=inputs=3:duration=first[audio];[audio]volume=0.05[out]",
+        f"[1:a][2:a][3:a]amix=inputs=3:duration=first:normalize=0[audio];[audio]volume=0.05[out]",
         "-map", "[out]",
         "-t", str(duration),
         "-c:a", "libmp3lame", "-q:a", "4",
