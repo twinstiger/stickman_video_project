@@ -1,5 +1,6 @@
 # 视频合成节点（动态时长版本）
 # 根据TTS朗读时长动态设置每张图片的显示时间
+# 在视频末尾添加结尾帧
 
 import os
 import json
@@ -32,6 +33,10 @@ FONT_COLOR = "white"
 BORDER_COLOR = "black"
 BORDER_WIDTH = 3
 BACKGROUND_COLOR = "black@0.4"
+
+# 结尾帧配置
+ENDING_TEXT = "关注@可罕，带你了解更多的知识。"
+ENDING_MIN_DURATION = 3.0  # 结尾帧最短显示时间
 
 
 def video_compose_node(
@@ -69,6 +74,12 @@ def video_compose_node(
             frame_paths.append(img_path)
         logger.info(f"Downloaded {len(frame_paths)} images")
         
+        # Step 1b: 生成结尾帧图片
+        ending_frame_path = os.path.join(temp_dir, "ending_frame.png")
+        _generate_ending_frame(ending_frame_path)
+        frame_paths.append(ending_frame_path)
+        logger.info(f"Generated ending frame: {ending_frame_path}")
+        
         # Step 2: 如果启用旁白，先生成所有TTS音频并获取时长
         narration_segments: List[str] = []
         segment_durations: List[float] = []  # 每个片段的实际时长
@@ -86,10 +97,11 @@ def video_compose_node(
             speaker = voice_mapping.get(voice_type, "zh_female_jitangnv_saturn_bigtts")
             logger.info(f"Selected voice: {voice_type} -> {speaker}, speech_rate=+15 (1.5x)")
             
-            narration_count = min(len(sentences), len(frame_paths))
-            logger.info(f"Narration count: {narration_count}")
+            # 注意：结尾帧单独处理，narration_count不包括结尾帧
+            narration_count = min(len(sentences), len(frame_paths) - 1)  # 减1因为结尾帧单独处理
+            logger.info(f"Narration count: {narration_count} (excluding ending frame)")
             
-            # 先生成所有TTS音频
+            # 先生成所有TTS音频（不包括结尾帧）
             for i in range(narration_count):
                 sentence = sentences[i] if i < len(sentences) else ""
                 if not sentence.strip():
@@ -125,9 +137,38 @@ def video_compose_node(
                     logger.warning(f"TTS segment {i} failed: {e}")
                     narration_segments.append(None)
                     segment_durations.append(MIN_IMAGE_DURATION)
+            
+            # 生成结尾帧的TTS音频
+            ending_audio_file = os.path.join(temp_dir, "narration_ending.mp3")
+            try:
+                ending_url, ending_size = tts_client.synthesize(
+                    uid="stickman_ending",
+                    text=ENDING_TEXT,
+                    speaker=speaker,
+                    audio_format="mp3",
+                    sample_rate=24000,
+                    speech_rate=10,  # 正常语速，结尾要清晰
+                    loudness_rate=20
+                )
+                logger.info(f"Ending TTS: url={ending_url}, size={ending_size}")
+                resp = requests.get(ending_url, timeout=30)
+                if resp.status_code == 200 and len(resp.content) > 0:
+                    with open(ending_audio_file, "wb") as f:
+                        f.write(resp.content)
+                    narration_segments.append(ending_audio_file)
+                    ending_duration = _get_audio_duration(ending_audio_file)
+                    segment_durations.append(max(ENDING_MIN_DURATION, ending_duration))
+                    logger.info(f"Ending frame duration: {ending_duration:.2f}s")
+                else:
+                    narration_segments.append(None)
+                    segment_durations.append(ENDING_MIN_DURATION)
+            except Exception as e:
+                logger.warning(f"Ending TTS failed: {e}")
+                narration_segments.append(None)
+                segment_durations.append(ENDING_MIN_DURATION)
         else:
-            # 没有旁白，使用固定时长
-            segment_durations = [MIN_IMAGE_DURATION] * len(frame_paths)
+            # 没有旁白，使用固定时长（包含结尾帧）
+            segment_durations = [MIN_IMAGE_DURATION] * (len(frame_paths) - 1) + [ENDING_MIN_DURATION]
         
         # Step 3: 计算每张图片的显示时间（朗读时长，最小MIN_IMAGE_DURATION）
         frame_durations: List[float] = []
@@ -154,9 +195,11 @@ def video_compose_node(
             if frame_paths:
                 f.write(f"file '{frame_paths[-1]}'\n")  # ffmpeg要求最后一帧要重复
         
-        # Step 5: 创建字幕（使用动态时间）
+        # Step 5: 创建字幕（使用动态时间，包含结尾帧）
         subtitle_file = os.path.join(temp_dir, "subtitles.ass")
-        _create_dynamic_ass_subtitle(subtitle_file, sentences, cumulative_times, len(frame_paths))
+        # 结尾帧是最后一帧，添加结尾文字到字幕列表
+        all_subtitle_texts = sentences + [ENDING_TEXT]
+        _create_dynamic_ass_subtitle(subtitle_file, all_subtitle_texts, cumulative_times, len(frame_paths))
         
         # Step 6: 生成BGM（根据视频总时长）
         bgm_file = os.path.join(temp_dir, "bgm.mp3")
@@ -459,3 +502,43 @@ def _generate_silence(output_file: str, duration: float):
         output_file
     ]
     subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+
+def _generate_ending_frame(output_file: str):
+    """生成结尾帧图片，带有"关注@可罕"的文字"""
+    # 使用ffmpeg生成一张带有渐变背景和文字的图片
+    # 1080x1920分辨率，与视频尺寸一致
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "lavfi",
+        "-i", "color=c=#1a1a2e:s=1080x1920:d=1,format=yuv420p",
+        "-f", "lavfi",
+        "-i", "color=c=#16213e:s=1080x1920:d=1,format=yuv420p",
+        "-filter_complex",
+        "[0:v][1:v]blend=all_expr='A*(1-Y/H)+B*(Y/H)'[bg];"
+        f"[bg]drawtext=text='{ENDING_TEXT}':"
+        f"fontfile=/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc:"
+        f"fontsize=56:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:"
+        f"shadowcolor=black@0.5:shadowx=2:shadowy=2:borderw=3:bordercolor=black[out]",
+        "-map", "[out]",
+        "-frames:v", "1",
+        output_file
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        logger.warning(f"Ending frame generation failed: {result.stderr}")
+        # 备用方案：生成纯色背景图片
+        fallback_cmd = [
+            "ffmpeg", "-y",
+            "-f", "lavfi",
+            "-i", "color=c=#1a1a2e:s=1080x1920:d=1,format=yuv420p",
+            "-vf",
+            f"drawtext=text='{ENDING_TEXT}':"
+            f"fontfile=/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc:"
+            f"fontsize=56:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:"
+            f"borderw=3:bordercolor=black",
+            "-frames:v", "1",
+            output_file
+        ]
+        subprocess.run(fallback_cmd, capture_output=True, text=True, timeout=30)
+    logger.info(f"Ending frame generated: {output_file}")
