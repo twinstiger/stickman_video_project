@@ -111,13 +111,14 @@ def single_image_gen_node(
     
     try:
         # 调用图片生成API
-        # 使用通用模型生成彩色漫画
+        # 使用SeeDream v4.5模型生成彩色插画
         result = image_client.generate(
             prompt=positive_prompt,
             negative_prompt=NEGATIVE_PROMPT,
             width=1080,
             height=1920,  # 9:16竖屏
-            model="doubao-seedream-5-0-260128"  # 使用最新SeeDream v5.0模型，支持高质量彩色生成
+            model="doubao-seedream-4-5-251128",  # 使用SeeDream v4.5模型
+            optimize_prompt_mode="standard"  # 标准提示词优化
         )
         
         # 获取生成的图片URL
